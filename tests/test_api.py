@@ -1,109 +1,75 @@
 
-
-import pytest
-
 from fastapi.testclient import TestClient
- 
+
 from api.main import app
- 
- 
-@pytest.fixture(scope="module")
 
-def client():
+client = TestClient(app)
 
-    with TestClient(app) as test_client:
+VALID_TRANSACTION = {
+    "step": 1,
+    "type": "TRANSFER",
+    "amount": 5000,
+    "oldbalanceOrg": 10000,
+    "newbalanceOrig": 5000,
+    "oldbalanceDest": 2000,
+    "newbalanceDest": 7000,
+}
 
-        yield test_client
- 
- 
-def test_home_endpoint(client):
 
-    response = client.get("/")
+def test_valid_transaction():
+    response = client.post(
+        "/predict",
+        json=VALID_TRANSACTION,
+    )
 
     assert response.status_code == 200
 
-    assert response.json()["docs"] == "/docs"
- 
- 
-def test_health_endpoint(client):
+    data = response.json()
+    assert data["is_fraud"] in [0, 1]
+    assert 0 <= data["fraud_probability"] <= 1
+    assert 0 <= data["threshold"] <= 1
+    assert data["label"] in ["Fraud", "Legitimate"]
 
+
+def test_missing_required_field():
+    transaction = VALID_TRANSACTION.copy()
+    transaction.pop("amount")
+
+    response = client.post("/predict", json=transaction)
+
+    assert response.status_code == 422
+
+
+def test_wrong_data_type():
+    transaction = VALID_TRANSACTION.copy()
+    transaction["amount"] = "five thousand"
+
+    response = client.post("/predict", json=transaction)
+
+    assert response.status_code == 422
+
+
+def test_negative_amount():
+    transaction = VALID_TRANSACTION.copy()
+    transaction["amount"] = -500
+
+    response = client.post("/predict", json=transaction)
+
+    assert response.status_code == 422
+
+
+def test_unsupported_transaction_type():
+    transaction = VALID_TRANSACTION.copy()
+    transaction["type"] = "UNKNOWN"
+
+    response = client.post("/predict", json=transaction)
+
+    assert response.status_code == 422
+
+
+def test_health_endpoint():
     response = client.get("/health")
 
     assert response.status_code == 200
-
     assert response.json()["status"] == "healthy"
-
     assert response.json()["model_loaded"] is True
- 
- 
-def test_predict_valid_transaction(client):
-
-    payload = {
-
-        "step": 1,
-
-        "type": "TRANSFER",
-
-        "amount": 181.0,
-
-        "oldbalanceOrg": 181.0,
-
-        "newbalanceOrig": 0.0,
-
-        "oldbalanceDest": 0.0,
-
-        "newbalanceDest": 0.0,
-
-    }
- 
-    response = client.post("/predict", json=payload)
-
-    assert response.status_code == 200
- 
-    body = response.json()
-
-    assert isinstance(body["is_fraud"], bool)
-
-    assert 0.0 <= body["fraud_probability"] <= 1.0
-
-    assert body["model_name"] == "RandomForest"
- 
- 
-def test_predict_rejects_missing_fields(client):
-
-    response = client.post(
-
-        "/predict",
-
-        json={"step": 1, "type": "TRANSFER", "amount": 181.0},
-
-    )
-
-    assert response.status_code == 422
- 
- 
-def test_predict_rejects_negative_amount(client):
-
-    payload = {
-
-        "step": 1,
-
-        "type": "TRANSFER",
-
-        "amount": -181.0,
-
-        "oldbalanceOrg": 181.0,
-
-        "newbalanceOrig": 0.0,
-
-        "oldbalanceDest": 0.0,
-
-        "newbalanceDest": 0.0,
-
-    }
- 
-    response = client.post("/predict", json=payload)
-
-    assert response.status_code == 422
-
- 

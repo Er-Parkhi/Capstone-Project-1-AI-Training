@@ -1,33 +1,32 @@
-__pycache__/
 
-*.py[cod]
-
-.pytest_cache/
-
+# Python virtual environments
 .venv/
-
 venv/
 
+# Python cache and test cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets
 .env
-
 .env.*
+!.env.example
 
-data/raw/*
+# Large datasets and processed data
+data/*.csv
+data/**/*.csv
+data/processed/
 
-data/processed/*
-
-!data/raw/.gitkeep
-
-!data/processed/.gitkeep
-
+# Generated model artifacts, except the pipeline required by the API
 models/*.pkl
-
+!models/final_fraud_pipeline.pkl
 models/*.joblib
-
 models/*.json
-
 models/*.csv
 
-reports/figures/*.png
 
-mlruns/
+# Editor and operating system files
+.vscode/
+.DS_Store
+Thumbs.db

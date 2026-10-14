@@ -1,429 +1,247 @@
-﻿
-import json
 
+from pathlib import Path
+import json
 import time
 
-import warnings
- 
 import joblib
-
 import matplotlib
-
 matplotlib.use("Agg")
-
 import matplotlib.pyplot as plt
-
 import pandas as pd
- 
-from sklearn.base import clone
 
-from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier
-
-from sklearn.linear_model import LogisticRegression
-
-from sklearn.metrics import (
-
-    average_precision_score,
-
-    classification_report,
-
-    confusion_matrix,
-
-    f1_score,
-
-    precision_score,
-
-    recall_score,
-
-    roc_auc_score,
-
-)
-
-from sklearn.model_selection import train_test_split
-
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
-
-from sklearn.tree import DecisionTreeClassifier
- 
-from src.config import (
-
-    DATA_PATH,
-
-    FIGURE_DIR,
-
-    MODEL_DIR,
-
-    NUMERIC_FEATURES,
-
-    CATEGORICAL_FEATURES,
-
-    TARGET_COLUMN,
-
-    RANDOM_STATE,
-
-    TEST_SIZE,
-
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+    confusion_matrix,
+    classification_report,
+    ConfusionMatrixDisplay,
 )
 
-from src.preprocessing import build_preprocessor
- 
-warnings.filterwarnings("ignore", category=UserWarning)
- 
- 
+# --------------------------------------------------
+# 1. Paths and configuration
+# --------------------------------------------------
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "data" / "processed"
+MODEL_DIR = ROOT / "models"
+REPORT_DIR = ROOT / "reports"
+
+TARGET = "isFraud"
+RANDOM_STATE = 42
+SAMPLE_SIZE = 300_000
+
+X_TRAIN_PATH = DATA_DIR / "X_train.parquet"
+X_TEST_PATH = DATA_DIR / "X_test.parquet"
+Y_TRAIN_PATH = DATA_DIR / "y_train.parquet"
+Y_TEST_PATH = DATA_DIR / "y_test.parquet"
+
+
 def main():
-
-    print("Loading sampled dataset...")
-
-    df = pd.read_csv(DATA_PATH)
- 
-    feature_columns = NUMERIC_FEATURES + CATEGORICAL_FEATURES
-
-    X = df[feature_columns]
-
-    y = df[TARGET_COLUMN].astype(int)
- 
-    print(f"Dataset shape: {df.shape}")
-
-    print(f"Fraud cases: {int(y.sum()):,}")
-
-    print(f"Fraud rate: {y.mean() * 100:.5f}%")
- 
-    X_train, X_test, y_train, y_test = train_test_split(
-
-        X,
-
-        y,
-
-        test_size=TEST_SIZE,
-
-        random_state=RANDOM_STATE,
-
-        stratify=y,
-
-    )
- 
-    print(f"Training rows: {len(X_train):,}")
-
-    print(f"Test rows: {len(X_test):,}")
-
-    print(f"Training fraud cases: {int(y_train.sum()):,}")
-
-    print(f"Test fraud cases: {int(y_test.sum()):,}")
- 
-    # HistGradientBoosting does not support class_weight in this version.
-
-    # For this baseline, use the four models with native class weighting
-
-    # where available; HistGradientBoosting is included with default weights.
-
-    models = {
-
-        "LogisticRegression": LogisticRegression(
-
-            max_iter=500,
-
-            class_weight="balanced",
-
-            solver="liblinear",
-
-            random_state=RANDOM_STATE,
-
-        ),
-
-        "DecisionTree": DecisionTreeClassifier(
-
-            class_weight="balanced",
-
-            max_depth=12,
-
-            min_samples_leaf=5,
-
-            random_state=RANDOM_STATE,
-
-        ),
-
-        "RandomForest": __import__("sklearn.ensemble", fromlist=["RandomForestClassifier"]).RandomForestClassifier(
-
-            n_estimators=1000,
-
-            max_depth=20,
-
-            min_samples_leaf=5,
-
-            class_weight="balanced_subsample",
-
-            n_jobs=-1,
-
-            random_state=RANDOM_STATE,
-
-        ),
-
-        "ExtraTrees": ExtraTreesClassifier(
-
-            n_estimators=100,
-
-            max_depth=16,
-
-            min_samples_leaf=2,
-
-            class_weight="balanced",
-
-            n_jobs=-1,
-
-            random_state=RANDOM_STATE,
-
-        ),
-
-        "HistGradientBoosting": HistGradientBoostingClassifier(
-
-            max_iter=100,
-
-            max_leaf_nodes=15,
-
-            learning_rate=0.1,
-
-            random_state=RANDOM_STATE,
-
-        ),
-
-    }
- 
-    results = []
-
-    best_model = None
-
-    best_name = None
-
-    best_score = -1.0
-
-    best_predictions = None
-
-    best_probabilities = None
- 
-    preprocessor = build_preprocessor()
- 
-    for name, estimator in models.items():
-
-        print(f"\n{'=' * 65}")
-
-        print(f"Training: {name}")
-
-        start = time.time()
- 
-        pipeline = Pipeline(
-
-            steps=[
-
-                ("preprocessor", clone(preprocessor)),
-
-                ("model", estimator),
-
-            ]
-
+    start = time.time()
+
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # --------------------------------------------------
+    # 2. Load existing train/test splits
+    # --------------------------------------------------
+    print("Loading saved datasets...")
+
+    for path in [
+        X_TRAIN_PATH, X_TEST_PATH,
+        Y_TRAIN_PATH, Y_TEST_PATH
+    ]:
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Missing file: {path}\n"
+                "Run src/preprocessing.py first."
+            )
+
+    X_train = pd.read_parquet(X_TRAIN_PATH)
+    X_test = pd.read_parquet(X_TEST_PATH)
+
+    y_train = pd.read_parquet(Y_TRAIN_PATH)[TARGET]
+    y_test = pd.read_parquet(Y_TEST_PATH)[TARGET]
+
+    print(f"Training rows available: {len(X_train):,}")
+    print(f"Testing rows available: {len(X_test):,}")
+
+    # --------------------------------------------------
+    # 3. Stratified sample from training data only
+    # --------------------------------------------------
+    if SAMPLE_SIZE > len(X_train):
+        raise ValueError(
+            f"SAMPLE_SIZE={SAMPLE_SIZE:,} exceeds "
+            f"training rows={len(X_train):,}"
         )
- 
-        try:
 
-            pipeline.fit(X_train, y_train)
- 
-            predictions = pipeline.predict(X_test)
-
-            probabilities = pipeline.predict_proba(X_test)[:, 1]
- 
-            precision = precision_score(
-
-                y_test, predictions, zero_division=0
-
-            )
-
-            recall = recall_score(
-
-                y_test, predictions, zero_division=0
-
-            )
-
-            f1 = f1_score(y_test, predictions, zero_division=0)
-
-            pr_auc = average_precision_score(y_test, probabilities)
-
-            roc_auc = roc_auc_score(y_test, probabilities)
- 
-            elapsed = time.time() - start
- 
-            row = {
-
-                "model": name,
-
-                "precision": precision,
-
-                "recall": recall,
-
-                "f1": f1,
-
-                "pr_auc": pr_auc,
-
-                "roc_auc": roc_auc,
-
-                "training_seconds": round(elapsed, 2),
-
-            }
-
-            results.append(row)
- 
-            print(json.dumps(row, indent=2))
-
-            print("\nClassification report:")
-
-            print(classification_report(
-
-                y_test,
-
-                predictions,
-
-                target_names=["Non-fraud", "Fraud"],
-
-                zero_division=0,
-
-            ))
- 
-            # PR-AUC is the primary baseline ranking metric for this
-
-            # extremely imbalanced classification problem.
-
-            if pr_auc > best_score:
-
-                best_score = pr_auc
-
-                best_name = name
-
-                best_model = pipeline
-
-                best_predictions = predictions.copy()
-
-                best_probabilities = probabilities.copy()
- 
-        except Exception as exc:
-
-            print(f"FAILED: {name}: {type(exc).__name__}: {exc}")
- 
-    if not results:
-
-        raise RuntimeError("All models failed. See errors above.")
- 
-    results_df = pd.DataFrame(results).sort_values(
-
-        by="pr_auc", ascending=False
-
+    sample_indices, _ = train_test_split(
+        range(len(y_train)),
+        train_size=SAMPLE_SIZE,
+        random_state=RANDOM_STATE,
+        stratify=y_train,
     )
 
-    results_path = MODEL_DIR / "model_comparison.csv"
+    X_fit = X_train.iloc[sample_indices].copy()
+    y_fit = y_train.iloc[sample_indices].copy()
 
-    results_df.to_csv(results_path, index=False)
- 
-    metrics_path = MODEL_DIR / "best_model_metrics.json"
+    print(f"\nSample used for fitting: {len(X_fit):,}")
+    print("Sample class distribution:")
+    print(y_fit.value_counts())
+
+    # Release the full training feature matrix before fitting.
+    del X_train, y_train, sample_indices
+
+    # --------------------------------------------------
+    # 4. Define preprocessing
+    # --------------------------------------------------
+    numeric_features = [
+        "step",
+        "amount",
+        "oldbalanceOrg",
+        "newbalanceOrig",
+        "oldbalanceDest",
+        "newbalanceDest",
+    ]
+
+    categorical_features = ["type"]
+
+    missing_columns = [
+        col for col in numeric_features + categorical_features
+        if col not in X_fit.columns
+    ]
+    if missing_columns:
+        raise ValueError(
+            f"Missing expected features: {missing_columns}"
+        )
+
+    preprocessing = ColumnTransformer(
+        transformers=[
+            (
+                "numeric",
+                StandardScaler(),
+                numeric_features,
+            ),
+            (
+                "categorical",
+                OneHotEncoder(
+                    handle_unknown="ignore",
+                    sparse_output=True,
+                ),
+                categorical_features,
+            ),
+        ],
+        remainder="drop",
+    )
+
+    # --------------------------------------------------
+    # 5. Train baseline Logistic Regression
+    # --------------------------------------------------
+    model = Pipeline(
+        steps=[
+            ("preprocessing", preprocessing),
+            (
+                "classifier",
+                LogisticRegression(
+                    class_weight="balanced",
+                    max_iter=200,
+                    solver="lbfgs",
+                    random_state=RANDOM_STATE,
+                ),
+            ),
+        ]
+    )
+
+    print("\nTraining Logistic Regression...")
+    model.fit(X_fit, y_fit)
+    print("Training completed.")
+
+    # --------------------------------------------------
+    # 6. Evaluate on the complete untouched test set
+    # --------------------------------------------------
+    print("\nPredicting on the full test set...")
+
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
 
     metrics = {
-
-        "selected_model": best_name,
-
-        "selection_metric": "PR-AUC (average precision)",
-
-        "test_pr_auc": float(best_score),
-
-        "test_precision": float(
-
-            precision_score(y_test, best_predictions, zero_division=0)
-
+        "model": "Logistic Regression",
+        "training_sample_size": int(len(X_fit)),
+        "test_size": int(len(y_test)),
+        "accuracy": float(accuracy_score(y_test, y_pred)),
+        "precision": float(
+            precision_score(y_test, y_pred, zero_division=0)
         ),
-
-        "test_recall": float(
-
-            recall_score(y_test, best_predictions, zero_division=0)
-
+        "recall": float(
+            recall_score(y_test, y_pred, zero_division=0)
         ),
-
-        "test_f1": float(
-
-            f1_score(y_test, best_predictions, zero_division=0)
-
+        "f1_score": float(
+            f1_score(y_test, y_pred, zero_division=0)
         ),
-
-        "test_roc_auc": float(
-
-            roc_auc_score(y_test, best_probabilities)
-
+        "roc_auc": float(roc_auc_score(y_test, y_prob)),
+        "pr_auc_average_precision": float(
+            average_precision_score(y_test, y_prob)
         ),
-
-        "test_rows": int(len(y_test)),
-
-        "test_fraud_cases": int(y_test.sum()),
-
-        "random_state": RANDOM_STATE,
-
-        "test_size": TEST_SIZE,
-
+        "threshold": 0.5,
     }
- 
-    model_path = MODEL_DIR / "fraud_detection_pipeline.pkl"
 
-    joblib.dump(best_model, model_path)
+    print("\n--- Baseline Evaluation ---")
+    for name, value in metrics.items():
+        print(f"{name}: {value}")
 
-    metrics_path.write_text(
-
-        json.dumps(metrics, indent=2),
-
-        encoding="utf-8",
-
+    print("\n--- Classification Report ---")
+    print(
+        classification_report(
+            y_test,
+            y_pred,
+            target_names=["Legitimate", "Fraud"],
+            zero_division=0,
+        )
     )
- 
-    cm = confusion_matrix(y_test, best_predictions)
 
-    fig, ax = plt.subplots(figsize=(6, 5))
+    # --------------------------------------------------
+    # 7. Save metrics and confusion matrix
+    # --------------------------------------------------
+    metrics_path = REPORT_DIR / "baseline_metrics.json"
+    with open(metrics_path, "w", encoding="utf-8") as file:
+        json.dump(metrics, file, indent=4)
 
-    image = ax.imshow(cm)
+    cm = confusion_matrix(y_test, y_pred)
+    display = ConfusionMatrixDisplay(
+        confusion_matrix=cm,
+        display_labels=["Legitimate", "Fraud"],
+    )
+    display.plot(values_format="d")
+    plt.title("Logistic Regression - Confusion Matrix")
+    plt.tight_layout()
+    plt.savefig(
+        REPORT_DIR / "baseline_confusion_matrix.png",
+        dpi=150,
+    )
+    plt.close()
 
-    ax.set_title(f"Confusion Matrix — {best_name}")
+    # --------------------------------------------------
+    # 8. Save trained pipeline
+    # --------------------------------------------------
+    model_path = MODEL_DIR / "logistic_regression.pkl"
+    joblib.dump(model, model_path, compress=3)
 
-    ax.set_xlabel("Predicted label")
+    print(f"\nModel saved: {model_path}")
+    print(f"Metrics saved: {metrics_path}")
+    print(
+        "Confusion matrix saved: "
+        f"{REPORT_DIR / 'baseline_confusion_matrix.png'}"
+    )
+    print(f"Total elapsed time: {time.time() - start:.1f} seconds")
 
-    ax.set_ylabel("Actual label")
 
-    ax.set_xticks([0, 1], ["Non-fraud", "Fraud"])
-
-    ax.set_yticks([0, 1], ["Non-fraud", "Fraud"])
- 
-    for (i, j), value in __import__("numpy").ndenumerate(cm):
-
-        ax.text(j, i, f"{value:,}", ha="center", va="center")
- 
-    fig.colorbar(image, ax=ax)
-
-    fig.tight_layout()
-
-    fig.savefig(FIGURE_DIR / "confusion_matrix.png", dpi=150)
-
-    plt.close(fig)
- 
-    print(f"\n{'=' * 65}")
-
-    print("MODEL COMPARISON (sorted by PR-AUC)")
-
-    print(results_df.to_string(index=False))
-
-    print("\nSelected model:", best_name)
-
-    print("Saved pipeline:", model_path)
-
-    print("Saved metrics:", metrics_path)
-
-    print("Saved comparison:", results_path)
-
-    print("Saved confusion matrix:", FIGURE_DIR / "confusion_matrix.png")
-
-    print("\nTraining run complete.")
- 
- 
 if __name__ == "__main__":
-
     main()
-
