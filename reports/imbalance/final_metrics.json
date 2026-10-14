@@ -1,0 +1,23 @@
+{
+  "threshold": 0.25000000000000006,
+  "average_precision_pr_auc": 0.9246648894166097,
+  "roc_auc": 0.9992045104098596,
+  "precision": 0.875,
+  "recall": 0.8855421686746988,
+  "f1": 0.8802395209580839,
+  "f2": 0.8834134615384616,
+  "tn": 127066,
+  "fp": 21,
+  "fn": 19,
+  "tp": 147,
+  "selected_model": "class_weight_random_forest",
+  "validation_f2": 0.9009009009009009,
+  "train_rows": 407207,
+  "validation_rows": 101802,
+  "test_rows": 127253,
+  "train_fraud_count": 530,
+  "validation_fraud_count": 132,
+  "test_fraud_count": 166,
+  "selection_metric": "validation PR-AUC, with validation F2 as tie-breaker",
+  "threshold_selection_metric": "validation F2 (beta=2)"
+}
